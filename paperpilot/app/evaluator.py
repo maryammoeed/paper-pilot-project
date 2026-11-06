@@ -6,6 +6,7 @@ with the list of problems as feedback, up to `settings.max_retries` attempts.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from pydantic import ValidationError
 
@@ -14,20 +15,41 @@ from .models import ClaimsOutput, CritiqueOutput, ReviewReport
 
 SCHEMAS = {"extractor": ClaimsOutput, "critic": CritiqueOutput, "writer": ReviewReport}
 _ws = re.compile(r"\s+")
+_TYPO = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+                      "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u2033": '"',
+                      "\u2013": "-", "\u2014": "-", "\u2012": "-", "\u2212": "-", "\u00ad": "",
+                      "\u00a0": " ", "\u2009": " ", "\u202f": " "})
 
 
 def _norm(s: str) -> str:
-    return _ws.sub(" ", s.lower()).strip().strip('"').strip()
+    """Compare text the way a human would: ignore case, spacing and typographic quote/dash styles."""
+    s = unicodedata.normalize("NFKC", s).translate(_TYPO).replace("\u2026", "...")
+    s = _ws.sub(" ", s.lower()).strip()
+    return s.strip("\"'").rstrip(".…").strip()
 
 
 def _grounded(paper: Paper, evidence) -> list[str]:
+    """Every quote must really appear in the paper.
+
+    A quote that sits in a different chunk than the one cited (or spans two neighbouring chunks)
+    is still grounded, so the citation is corrected instead of failing the whole output."""
     problems = []
+    texts = [_norm(c.text) for c in paper.chunks]
     for ev in evidence:
+        q = _norm(ev.quote)
+        if not q:
+            problems.append("evidence has an empty quote")
+            continue
         ch = paper.chunk(ev.chunk_id)
-        if ch is None:
-            problems.append(f"evidence cites chunk '{ev.chunk_id}', which does not exist")
-        elif _norm(ev.quote) not in _norm(ch.text):
-            problems.append(f"quote is not verbatim from {ev.chunk_id}: \"{ev.quote[:80]}\"")
+        if ch is not None and q in _norm(ch.text):
+            continue
+        hit = next((i for i, t in enumerate(texts) if q in t), None)
+        if hit is None:   # sentence split across two neighbouring chunks
+            hit = next((i for i in range(len(texts) - 1) if q in texts[i] + " " + texts[i + 1]), None)
+        if hit is not None:
+            ev.chunk_id = paper.chunks[hit].id
+        else:
+            problems.append(f"quote does not appear in the paper: \"{ev.quote[:80]}\"")
     return problems
 
 

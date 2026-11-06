@@ -24,13 +24,13 @@ def test_paraphrased_quote_is_rejected():
         "text": "improves accuracy", "confidence": 0.9,
         "evidence": [{"chunk_id": "c1", "quote": "The approach gets about 81 accuracy"}]}]}
     _, problems = evaluate("extractor", data, PAPER)
-    assert any("not verbatim" in p for p in problems)
+    assert any("does not appear" in p for p in problems)
 
 
 def test_unknown_chunk_and_bad_schema_are_rejected():
     _, p1 = evaluate("extractor", {"title": "t", "summary": "s", "claims": [{
         "text": "x", "confidence": 0.5, "evidence": [{"chunk_id": "c99", "quote": "x"}]}]}, PAPER)
-    assert any("does not exist" in p for p in p1)
+    assert any("does not appear" in p for p in p1)
     _, p2 = evaluate("extractor", {"title": "t"}, PAPER)
     assert p2 and p2[0].startswith("schema")
 
@@ -63,3 +63,38 @@ def test_risk_grows_with_unsupported_claims_and_retries():
 def test_reject_verdict_always_pauses_at_balanced():
     d = verdict_checkpoint(Autonomy.BALANCED, "reject", 0.9, 4)
     assert d.action == "ask" and "Finalize" in d.options
+
+
+TYPO = parse("""# T
+## Results
+Apart from new projects my work also includes extending systems I didn’t write. A message was picked up twice — so it ran twice.
+""")
+
+
+def _claim(chunk_id, quote):
+    return {"title": "t", "summary": "s", "claims": [{"text": "x", "confidence": 0.8,
+            "evidence": [{"chunk_id": chunk_id, "quote": quote}]}]}
+
+
+def test_typographic_quotes_and_dashes_still_count_as_verbatim():
+    _, problems = evaluate("extractor", _claim("c0", "extending systems I didn't write."), TYPO)
+    assert problems == []
+    _, problems = evaluate("extractor", _claim("c0", "picked up twice - so it ran twice"), TYPO)
+    assert problems == []
+
+
+def test_wrong_chunk_id_is_corrected_not_failed():
+    obj, problems = evaluate("extractor", _claim("c7", "The method reaches 81.2 accuracy"), PAPER)
+    assert problems == [] and obj.claims[0].evidence[0].chunk_id == "c1"
+
+
+def test_invented_quote_is_still_rejected():
+    _, problems = evaluate("extractor", _claim("c1", "The method reaches 95 accuracy"), PAPER)
+    assert problems and "does not appear" in problems[0]
+
+
+def test_chunks_never_split_a_sentence():
+    from app.ingest import parse as p
+    text = "# T\n## Results\n" + " ".join(f"Sentence number {i} has exactly seven words." for i in range(60))
+    for c in p(text).chunks:
+        assert c.text.endswith(".") and c.text.startswith("Sentence")

@@ -13,6 +13,9 @@ HEADING = re.compile(
 )
 
 
+SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\u201c\u2018])")
+
+
 @dataclass
 class Chunk:
     id: str
@@ -54,9 +57,22 @@ def parse(text: str, max_words: int = 140) -> Paper:
     buf: list[str] = []
 
     def flush():
-        words = " ".join(buf).split()
-        while words:
-            piece, words = words[:max_words], words[max_words:]
+        # pack whole sentences into chunks of ~max_words so a quote never straddles two chunks
+        piece: list[str] = []
+        for sent in SENTENCE.split(" ".join(buf)):
+            n = len(sent.split())
+            if piece and len(" ".join(piece).split()) + n > max_words:
+                chunks.append(Chunk(id=f"c{len(chunks)}", section=section, text=" ".join(piece)))
+                piece = []
+            if n > max_words:          # one giant "sentence" (e.g. no punctuation): split by words
+                words = sent.split()
+                while len(words) > max_words:
+                    chunks.append(Chunk(id=f"c{len(chunks)}", section=section, text=" ".join(words[:max_words])))
+                    words = words[max_words:]
+                sent = " ".join(words)
+            if sent.strip():
+                piece.append(sent.strip())
+        if piece:
             chunks.append(Chunk(id=f"c{len(chunks)}", section=section, text=" ".join(piece)))
         buf.clear()
 
