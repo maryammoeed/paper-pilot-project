@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PaperPilot · multi-agent paper reviewer</title>
+<meta name="description" content="A multi-agent research-paper reviewer with guardrails, an evaluator loop and adaptive autonomy: it decides when to proceed on its own and when to ask you.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f8fc;--panel:#fff;--line:#dde4f0;--accent:#5b7fd6;--accent-d:#3f62b8;--deep:#1e2a46;--ink:#24304a;--muted:#66738f;
+  --ok:#059669;--ok-bg:#ecfdf5;--warn:#b45309;--warn-bg:#fffbeb;--bad:#be123c;--bad-bg:#fff1f2;--lav:#8b5cf6;--lav-bg:#f5f3ff;--cyan:#0891b2;--cyan-bg:#ecfeff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 Nunito,system-ui,sans-serif}
+h1,h2,h3{font-family:Fredoka,Nunito,sans-serif;margin:0;font-weight:600}
+button{font:inherit;cursor:pointer}
+header{display:flex;align-items:center;gap:14px;padding:18px 24px;border-bottom:2px dashed var(--line);background:linear-gradient(135deg,#eef3fc,#f6f8fc)}
+.logo{width:42px;height:42px;border-radius:14px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:22px;box-shadow:0 4px 0 var(--accent-d)}
+header h1{font-size:24px;color:var(--accent-d)}
+header p{margin:0;color:var(--muted);font-weight:700;font-size:13.5px}
+.model{margin-left:auto;font-size:12px;font-weight:800;color:var(--accent-d);background:#fff;border:2px solid var(--line);border-radius:999px;padding:4px 10px;white-space:nowrap}
+main{display:grid;grid-template-columns:340px 1fr;gap:20px;padding:20px 24px;max-width:1280px;margin:0 auto}
+.panel{background:var(--panel);border:2px solid var(--line);border-radius:20px;padding:18px}
+.panel h2{font-size:17px;color:var(--deep);margin-bottom:10px}
+.lbl{font-size:12px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin:14px 0 6px}
+.samples{display:grid;gap:8px}
+.sample{text-align:left;border:2px solid var(--line);background:#fff;border-radius:14px;padding:10px 12px;font-weight:700;color:var(--ink)}
+.sample small{display:block;color:var(--muted);font-weight:600}
+.sample.on{border-color:var(--accent);background:#eef3fc}
+.or{text-align:center;color:var(--muted);font-size:12px;font-weight:800;margin:10px 0}
+.drop{display:block;border:2px dashed #b9c9ec;border-radius:14px;padding:12px;text-align:center;color:var(--muted);font-weight:700;font-size:13px;cursor:pointer}
+.drop.on{border-color:var(--accent);color:var(--accent-d);background:#eef3fc}
+textarea{width:100%;min-height:80px;border:2px solid var(--line);border-radius:14px;padding:10px;font:13px/1.4 Nunito,sans-serif;resize:vertical;color:var(--ink)}
+.auto{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.auto button{border:2px solid var(--line);background:#fff;border-radius:12px;padding:8px 4px;font-weight:800;font-size:12.5px;color:var(--ink)}
+.auto button:disabled{opacity:.45;cursor:not-allowed}
+.auto button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.autohelp{font-size:12.5px;color:var(--muted);margin-top:6px;min-height:38px}
+.autohelp a{color:var(--accent-d);font-weight:800}
+.auto.two{grid-template-columns:1fr 1fr}
+.run{width:100%;margin-top:16px;border:0;background:var(--accent);color:#fff;font-weight:800;font-size:16px;border-radius:999px;padding:12px;box-shadow:0 4px 0 var(--accent-d)}
+.run:disabled{opacity:.55;cursor:not-allowed}
+.err{color:var(--bad);font-weight:700;font-size:13px;margin-top:8px;min-height:18px}
+
+/* pipeline map */
+.map{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px}
+.node{border:2px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:800;color:var(--muted);transition:.2s}
+.node.active{border-color:var(--accent);color:var(--accent-d);background:#eef3fc;box-shadow:0 0 0 4px #d4def455}
+.node.done{border-color:#a7f3d0;color:var(--ok);background:var(--ok-bg)}
+.node.retry{border-color:#fcd34d;color:var(--warn);background:var(--warn-bg)}
+.arrow{color:#b9c9ec;font-weight:800}
+.empty{color:var(--muted);text-align:center;padding:40px 10px}
+.empty b{color:var(--accent-d)}
+
+/* timeline */
+.tl{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.ev{border-left:4px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-size:13.5px;animation:pop .25s ease}
+@keyframes pop{from{opacity:0;transform:translateY(4px)}}
+.ev .t{float:right;color:var(--muted);font-size:11.5px;font-weight:700}
+.ev b{color:var(--deep)}
+.ev ul{margin:4px 0 0;padding-left:18px;color:var(--muted)}
+.ev.ok{border-color:var(--ok)} .ev.fail{border-color:var(--warn);background:var(--warn-bg)}
+.ev.guard{border-color:var(--cyan)} .ev.flag{border-color:var(--bad);background:var(--bad-bg)}
+.ev.decide{border-color:var(--lav);background:var(--lav-bg)} .ev.ask{border-color:var(--accent);background:#eef3fc}
+.risk{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;color:var(--lav)}
+.risk i{display:inline-block;width:70px;height:7px;border-radius:9px;background:#ede9fe;position:relative;overflow:hidden}
+.risk i::after{content:"";position:absolute;inset:0;width:var(--w);background:var(--lav);border-radius:9px}
+
+/* ask card */
+.askcard{border:3px solid var(--accent);background:#fff;border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 6px 0 #b9c9ec66}
+.askcard h3{color:var(--accent-d);font-size:17px;margin-bottom:4px}
+.askcard .why{font-size:12.5px;color:var(--muted);margin:6px 0 10px}
+.opts{display:flex;flex-wrap:wrap;gap:8px}
+.opts button{border:2px solid var(--accent);background:#fff;color:var(--accent-d);border-radius:999px;padding:7px 14px;font-weight:800}
+.opts button:first-child{background:var(--accent);color:#fff}
+
+/* report */
+.report{margin-top:16px}
+.rhead{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px}
+.rhead h2{font-size:20px;color:var(--deep);flex:1;min-width:200px}
+.rec{border-radius:999px;padding:5px 12px;font-weight:800;font-size:13px;text-transform:capitalize}
+.rec.accept{background:var(--ok-bg);color:var(--ok)} .rec.minor{background:var(--cyan-bg);color:var(--cyan)}
+.rec.major{background:var(--warn-bg);color:var(--warn)} .rec.reject{background:var(--bad-bg);color:var(--bad)}
+.note{background:var(--bad-bg);border:2px solid #fecdd3;color:var(--bad);border-radius:12px;padding:8px 12px;font-weight:700;font-size:13px;margin:8px 0}
+.scores{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.score{background:#eef3fc;border-radius:12px;padding:8px 10px;font-weight:800;font-size:12.5px;color:var(--muted)}
+.score b{display:block;font-size:20px;color:var(--accent-d)}
+.report h3{font-size:15px;color:var(--deep);margin:14px 0 6px}
+.weak{border:2px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.weak .tag{font-size:11px;font-weight:800;text-transform:uppercase;border-radius:6px;padding:1px 6px;margin-right:6px}
+.tag.major{background:var(--warn-bg);color:var(--warn)} .tag.minor{background:var(--cyan-bg);color:var(--cyan)}
+blockquote{margin:6px 0 0;padding:6px 10px;border-left:3px solid #b9c9ec;background:#fafbfe;color:var(--muted);font-size:13px;border-radius:0 8px 8px 0}
+blockquote small{font-weight:800;color:var(--accent-d)}
+.report ul{margin:0;padding-left:20px}
+footer{text-align:center;color:var(--muted);font-size:12.5px;padding:10px 0 24px}
+footer a{color:var(--accent-d);font-weight:800}
+@media (max-width:860px){main{grid-template-columns:1fr;padding:14px}header{padding:14px}.model{display:none}.scores{grid-template-columns:1fr 1fr 1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-hidden="true">✦</div>
+  <div><h1>PaperPilot</h1><p>A multi-agent paper reviewer that knows when to ask.</p></div>
+  <span class="model" id="model">connecting…</span>
+</header>
+
+<main>
+  <section class="panel" aria-label="Start a review">
+    <h2>1 · Choose a paper</h2>
+    <div class="samples" id="samples"></div>
+    <div class="or">— or —</div>
+    <label class="drop" id="drop">📄 Upload a PDF or .txt/.md<input type="file" id="file" accept=".pdf,.txt,.md" hidden></label>
+    <div class="or">— or paste text —</div>
+    <textarea id="text" placeholder="Paste a paper (title, abstract, sections…)"></textarea>
+
+    <div class="lbl">2 · How much autonomy?</div>
+    <div class="auto" role="radiogroup" aria-label="Autonomy level">
+      <button data-a="hands_on" role="radio">Hands-on</button>
+      <button data-a="balanced" role="radio" class="on" aria-checked="true">Balanced</button>
+      <button data-a="hands_off" role="radio">Hands-off</button>
+    </div>
+    <div class="autohelp" id="autohelp"></div>
+
+    <div class="lbl">3 · Which model?</div>
+    <div class="auto two" role="radiogroup" aria-label="Model">
+      <button data-m="hosted" role="radio">Real AI</button>
+      <button data-m="demo" role="radio">Demo</button>
+    </div>
+    <div class="autohelp" id="modehelp"></div>
+    <button class="run" id="run">Review this paper ✨</button>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section class="panel" aria-label="Live run">
+    <h2>Live pipeline</h2>
+    <div class="map" id="map"></div>
+    <div id="ask"></div>
+    <div id="empty" class="empty">Pick a paper and press <b>Review</b>. You'll see each agent work, the evaluator send work back, and the moments where PaperPilot decides to <b>ask you</b> instead of guessing.</div>
+    <ol class="tl" id="tl"></ol>
+    <div id="report"></div>
+  </section>
+</main>
+<footer>Built by <a href="https://github.com/maryammoeed">Maryam Moeed</a> · guardrails in &amp; out · evaluator loop · adaptive autonomy</footer>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const md=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+const STAGES=[['input_guardrails','Input guardrails'],['knowledge_base','Knowledge base'],['extractor','Claim extractor'],['critic','Methods critic'],['writer','Review writer'],['output_guardrails','Output guardrails']];
+const HELP={hands_on:'Pauses at almost every checkpoint so you approve each important step.',balanced:'Proceeds on routine steps; pauses when risk is moderate or the output is consequential.',hands_off:'Works on its own unless risk is very high. Safety stops still apply.'};
+let autonomy='balanced',sample=null,file=null,cur=null,busy=false;
+
+$('#map').innerHTML=STAGES.map(([k,l],i)=>`${i?'<span class="arrow">→</span>':''}<span class="node" id="n-${k}">${l}</span>`).join('');
+const help=()=>$('#autohelp').textContent=HELP[autonomy]; help();
+let mode='demo',health={};
+function setMode(m){
+  if(m==='hosted'&&!health.hosted)return;
+  mode=m;
+  document.querySelectorAll('[data-m]').forEach(x=>{const on=x.dataset.m===m;x.classList.toggle('on',on);on?x.setAttribute('aria-checked','true'):x.removeAttribute('aria-checked');});
+  $('#modehelp').innerHTML=m==='hosted'
+    ?`Real reviews by <b>${esc(health.hosted_model)}</b>. No key needed · ${health.hosted_left_today} free reviews left today.`
+    :'A built-in offline model that shows the full pipeline instantly. Results are illustrative.';
+  $('#model').textContent='🤖 '+(m==='hosted'?health.hosted_model:'demo-mode (offline)');
+}
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+document.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-a]').forEach(x=>{x.classList.remove('on');x.removeAttribute('aria-checked')});
+  b.classList.add('on');b.setAttribute('aria-checked','true');autonomy=b.dataset.a;help();});
+
+function loadHealth(keep){return fetch('/api/health').then(r=>r.json()).then(h=>{health=h;
+  const hb=document.querySelector('[data-m="hosted"]');hb.disabled=!h.hosted;
+  hb.title=h.hosted?'':'Not configured on this server (set LLM_PROVIDER=groq and GROQ_API_KEY)';
+  setMode(keep||(h.hosted&&h.hosted_left_today>0?'hosted':'demo'));}).catch(()=>$('#model').textContent='offline');}
+loadHealth();
+fetch('/api/samples').then(r=>r.json()).then(list=>{
+  $('#samples').innerHTML=list.map(s=>`<button class="sample" data-id="${s.id}">${esc(s.title)}<small>${s.id==='federated-gait'?'contains a hidden prompt injection':'overclaims, thin baselines'}</small></button>`).join('');
+  document.querySelectorAll('.sample').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.sample').forEach(x=>x.classList.remove('on'));b.classList.add('on');sample=b.dataset.id;file=null;$('#drop').classList.remove('on');$('#drop').firstChild.textContent='📄 Upload a PDF or .txt/.md';$('#text').value='';});
+  if(list[0])document.querySelector('.sample').click();
+});
+$('#file').onchange=e=>{file=e.target.files[0];if(!file)return;sample=null;document.querySelectorAll('.sample').forEach(x=>x.classList.remove('on'));
+  $('#drop').classList.add('on');$('#drop').firstChild.textContent='📄 '+file.name;};
+$('#text').oninput=()=>{if($('#text').value.trim()){sample=null;file=null;document.querySelectorAll('.sample').forEach(x=>x.classList.remove('on'));}};
+
+function node(stage,cls){const n=$('#n-'+stage);if(!n)return;n.classList.remove('active','done','retry');if(cls)n.classList.add(cls);}
+function add(cls,html,t){const li=document.createElement('li');li.className='ev '+cls;li.innerHTML=(t!=null?`<span class="t">${t}s</span>`:'')+html;$('#tl').appendChild(li);li.scrollIntoView({block:'nearest',behavior:'smooth'});}
+const riskBar=r=>`<span class="risk">risk ${r.toFixed(2)} <i style="--w:${Math.round(r*100)}%"></i></span>`;
+const LABEL=Object.fromEntries(STAGES);
+
+function handle(e){
+  switch(e.type){
+    case 'start':$('#model').textContent='🤖 '+e.model;add('', `<b>Run started</b> · model ${esc(e.model)} · autonomy <b>${esc(e.autonomy.replace('_','-'))}</b> · up to ${e.max_retries} attempts per agent`,e.t);break;
+    case 'step':
+      if(e.status==='start'){node(e.stage,'active');break;}
+      node(e.stage,'done');
+      if(e.stage.endsWith('guardrails')){
+        if(e.findings&&e.findings.length)add('flag',`<b>${LABEL[e.stage]}</b> found ${e.findings.length} issue(s)<ul>${e.findings.map(f=>`<li>${esc(f.type.replace('_',' '))}: ${esc(f.detail)}</li>`).join('')}</ul>`,e.t);
+        else add('guard',`<b>${LABEL[e.stage]}</b> passed`,e.t);
+      } else if(e.stage==='knowledge_base') add('guard',`<b>Knowledge base</b> built: “${esc(e.title)}”, ${e.chunks} chunks across ${e.sections.length} sections`,e.t);
+      break;
+    case 'eval':
+      if(e.passed){node(e.stage,'done');add('ok',`<b>Evaluator ✓</b> ${LABEL[e.stage]} passed all rules (attempt ${e.attempt})`,e.t);}
+      else{node(e.stage,'retry');add('fail',`<b>Evaluator ✗</b> sent ${LABEL[e.stage]} back (attempt ${e.attempt})<ul>${e.problems.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>`,e.t);}
+      break;
+    case 'decision':add('decide',`<b>Decided on my own</b> at the ${esc(e.checkpoint)} checkpoint ${riskBar(e.risk)}<ul>${e.reasons.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>`,e.t);break;
+    case 'ask':
+      add('ask',`<b>Paused to ask you</b> at the ${esc(e.checkpoint)} checkpoint ${riskBar(e.risk)}`,e.t);
+      $('#ask').innerHTML=`<div class="askcard" role="alert"><h3>🙋 Your call</h3><div>${md(e.question)}</div><div class="why">Why I'm asking: ${e.reasons.map(esc).join(' · ')}</div><div class="opts">${e.options.map(o=>`<button>${esc(o)}</button>`).join('')}</div></div>`;
+      $('#ask').querySelectorAll('button').forEach(b=>b.onclick=()=>answer(b.textContent));
+      $('#ask').scrollIntoView({block:'nearest',behavior:'smooth'});break;
+    case 'answer':$('#ask').innerHTML='';add('ok',`<b>You chose:</b> ${esc(e.answer)}`,e.t);break;
+    case 'done':add('ok','<b>Review released</b> ✨',e.t);report(e.report);finish();break;
+    case 'stopped':add('flag',`<b>Stopped safely:</b> ${esc(e.reason)}`,e.t);finish();break;
+    case 'error':add('flag',`<b>Error:</b> ${esc(e.message)}`,e.t);finish();break;
+  }
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// Each response carries the signed progress of the review; we send it back with the next step.
+async function drive(resp){
+  while(true){
+    const j=await resp.json();
+    if(!resp.ok){$('#err').textContent=j.detail||'Something went wrong.';finish();return;}
+    cur={state:j.state,sig:j.sig};
+    j.events.forEach(handle);
+    if(j.status==='rate_limited'){
+      const s=Math.ceil(j.retry_after||5);
+      add('decide',`<b>Model is busy</b>: free-tier rate limit, continuing in ${s}s…`,null);
+      await sleep(s*1000);
+    } else if(j.status!=='running'){ return; }        // waiting for you, done, stopped or error
+    resp=await post('/api/step',{state:cur.state,sig:cur.sig});
+  }
+}
+const post=(url,body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+async function answer(a){
+  $('#ask').querySelectorAll('button').forEach(b=>b.disabled=true);
+  await drive(await post('/api/step',{state:cur.state,sig:cur.sig,answer:a}));
+}
+function finish(){loadHealth(mode);document.querySelectorAll('.node.active').forEach(n=>n.classList.remove('active'));$('#run').disabled=false;$('#run').textContent='Review another ✨';}
+function report(r){
+  const cls=r.recommendation.startsWith('minor')?'minor':r.recommendation.startsWith('major')?'major':r.recommendation;
+  const ev=list=>(list||[]).map(q=>`<blockquote><small>${esc(q.chunk_id)}</small> “${esc(q.quote)}”</blockquote>`).join('');
+  $('#report').innerHTML=`<div class="report panel">
+    <div class="rhead"><h2>${esc(r.title)}</h2><span class="rec ${cls}">${esc(r.recommendation)}${r.human_override?' · set by you':''}</span></div>
+    ${r.integrity_note?`<div class="note">⚠️ ${esc(r.integrity_note)}</div>`:''}
+    <p>${esc(r.summary)}</p>
+    <div class="scores">${Object.entries(r.scores).map(([k,v])=>`<div class="score">${k}<b>${v}/5</b></div>`).join('')}</div>
+    <h3>Strengths</h3><ul>${r.strengths.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>
+    <h3>Weaknesses</h3>${r.weaknesses.map(w=>`<div class="weak"><span class="tag ${w.severity}">${w.severity}</span><b>${esc(w.aspect)}</b> — ${esc(w.comment)}${ev(w.evidence)}</div>`).join('')||'<p>None found.</p>'}
+    <h3>Questions for the authors</h3><ul>${r.questions_for_authors.map(q=>`<li>${esc(q)}</li>`).join('')}</ul>
+    <p style="color:var(--muted);font-size:12.5px">Reviewer confidence ${(r.confidence*100).toFixed(0)}% · every quote above was checked to appear verbatim in the paper.</p></div>`;
+}
+$('#run').onclick=async()=>{
+  $('#err').textContent='';
+  const fd=new FormData();fd.append('autonomy',autonomy);
+  fd.append('mode',mode);
+  if(file)fd.append('file',file);else if(sample)fd.append('sample',sample);else if($('#text').value.trim())fd.append('text',$('#text').value);
+  else{$('#err').textContent='Choose a sample, upload a file or paste text.';return;}
+  $('#run').disabled=true;$('#run').textContent='Reviewing…';
+  $('#tl').innerHTML='';$('#report').innerHTML='';$('#ask').innerHTML='';$('#empty').hidden=true;STAGES.forEach(([k])=>node(k,null));
+  try{ await drive(await fetch('/api/start',{method:'POST',body:fd})); }
+  catch(e){ $('#err').textContent='Connection problem. Please try again.'; finish(); }
+};
+</script>
+</body>
+</html>
