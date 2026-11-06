@@ -161,3 +161,32 @@ def test_toxic_review_is_rewritten_once():
     guards = [e for e in run.events if e["type"] == "step" and e["stage"] == "output_guardrails" and e["status"] == "done"]
     assert run.status == "done" and guards[0]["findings"] and not guards[-1]["findings"]
     assert "garbage" not in run.report["summary"]
+
+
+def test_demo_handles_first_person_non_paper_text():
+    from app.engine import Engine, new_state
+    text = ("Proposal:\n" + "Our workflow sometimes processed the same message twice, which created duplicate records. "
+            "I traced it to lock expiry during long-running handlers. I fixed the lock handling so each message is "
+            "processed exactly once. After the fix we saw zero duplicates over the following month. " * 3)
+
+    async def go():
+        e = Engine(MockLLM(delay=0))
+        st = new_state(text, Autonomy.HANDS_OFF, "demo", "m")
+        while st["status"] == "running":
+            st, _ = await e.advance(st)
+        return st
+    st = asyncio.run(go())
+    assert st["status"] == "done" and st["claims"]["claims"]
+
+
+def test_demo_falls_back_when_no_claim_phrases_exist():
+    from app.engine import Engine, new_state
+    text = "Notes\n" + "The weather in the valley was mild for most of the season this year. " * 15
+
+    async def go():
+        e = Engine(MockLLM(delay=0))
+        st = new_state(text, Autonomy.HANDS_OFF, "demo", "m")
+        while st["status"] == "running":
+            st, _ = await e.advance(st)
+        return st
+    assert asyncio.run(go())["status"] == "done"

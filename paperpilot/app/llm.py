@@ -96,10 +96,13 @@ def _retry_after(r: httpx.Response) -> float | None:
 # Offline demo model
 # --------------------------------------------------------------------------------------------
 CLAIM_CUES = re.compile(
-    r"\b(we (propose|introduce|present|show|demonstrate|find)|outperforms?|achieves?|improves?|"
-    r"state[- ]of[- ]the[- ]art|first to|novel|generali[sz]es?)\b", re.I)
-EMPIRICAL = re.compile(r"\b(we (show|demonstrate|find)|outperforms?|achieves?|improves?|reduces?|"
-                       r"state[- ]of[- ]the[- ]art|first to|matches|generali[sz]es?)\b", re.I)
+    r"\b((we|i|our team) (propose|introduce|present|show|demonstrate|find|built|build|developed|designed|"
+    r"implemented|fixed|created|deployed|reduced|improved|achieved|automated|led|added|traced|found|saw|measured)|"
+    r"this (paper|work|proposal|project|study) (proposes|presents|shows|introduces|describes)|"
+    r"outperforms?|achieves?|improves?|reduces?|state[- ]of[- ]the[- ]art|first to|novel|generali[sz]es?)\b", re.I)
+EMPIRICAL = re.compile(r"\b(we (show|demonstrate|find)|outperforms?|achieves?|achieved|improves?|improved|"
+                       r"reduces?|reduced|increased|decreased|state[- ]of[- ]the[- ]art|first to|matches|"
+                       r"generali[sz]es?)\b|\d+(\.\d+)?\s*%", re.I)
 SENT = re.compile(r"(?<=[.!?])\s+")
 RESULT_SECTIONS = re.compile(r"experiment|result|evaluation", re.I)
 
@@ -174,14 +177,16 @@ class MockLLM:
         index: BM25 = ctx["index"]
         claims, seen = [], set()
         common = _common_tokens(paper)
+        has_results = any(RESULT_SECTIONS.search(c.section) for c in paper.chunks)
         for ch in paper.chunks:
-            if RESULT_SECTIONS.search(ch.section):
+            if has_results and RESULT_SECTIONS.search(ch.section):
                 continue
             for s in _sentences(ch.text):
                 if CLAIM_CUES.search(s) and s not in seen and len(claims) < 5:
                     seen.add(s)
                     support = [c for c, _ in index.search(s, k=6)
-                               if RESULT_SECTIONS.search(c.section) and _overlap(s, c.text, common) >= 3]
+                               if (RESULT_SECTIONS.search(c.section) if has_results else s not in c.text)
+                               and _overlap(s, c.text, common) >= 3]
                     ev = [{"chunk_id": ch.id, "quote": s}]
                     if support:
                         q = _sentences(support[0].text)
@@ -192,6 +197,12 @@ class MockLLM:
                     else:
                         conf = 0.86 if support else 0.38
                     claims.append({"text": s, "evidence": ev, "confidence": conf})
+        if not claims:
+            # no paper-style phrasing: fall back to the most informative sentences, as plain contributions
+            sents = [(c.id, x) for c in paper.chunks for x in _sentences(c.text) if len(x.split()) >= 8]
+            sents.sort(key=lambda p: (not re.search(r"\d", p[1]), -len(p[1].split())))
+            for cid, x in sents[:3]:
+                claims.append({"text": x, "evidence": [{"chunk_id": cid, "quote": x}], "confidence": 0.6})
         abstract = next((c.text for c in paper.chunks if c.section.lower().startswith("abstract")), paper.chunks[0].text)
         return {"title": paper.title, "summary": " ".join(_sentences(abstract)[:2]) or abstract[:300], "claims": claims}
 
